@@ -1,0 +1,43 @@
+# Builds an unsigned vault.ipa on a GitHub Mac (real Xcode). Sideloadly signs it with your Apple ID when you install it.
+# Runs on every push, or by hand: Actions tab → "Build iPhone app" → Run workflow.
+name: Build iPhone app
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build vault.ipa
+        run: |
+          set -euo pipefail
+          APP=build/Payload/Vault.app
+          mkdir -p "$APP"
+          # compile the app
+          xcrun -sdk iphoneos swiftc -target arm64-apple-ios15.0 -O Vault/main.swift -o "$APP/Vault"
+          # icon + launch colour
+          xcrun actool Vault/Assets.xcassets --compile "$APP" --platform iphoneos --minimum-deployment-target 15.0 \
+            --app-icon AppIcon --target-device iphone --target-device ipad --output-partial-info-plist build/assets.plist \
+            --errors --warnings
+          # settings file (with the icon entries actool generated)
+          cp Vault/Info.plist "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c "Merge build/assets.plist" "$APP/Info.plist"
+          plutil -lint "$APP/Info.plist"
+          plutil -convert binary1 "$APP/Info.plist"
+          printf 'APPL????' > "$APP/PkgInfo"
+          (cd build && zip -qry ../vault.ipa Payload)
+          ls -la vault.ipa
+      - name: Keep the .ipa with this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: vault-ipa
+          path: vault.ipa
+      - name: Publish it as the "latest" download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest vault.ipa --title "[vault] for iPhone" --notes "Download vault.ipa and drag it into Sideloadly."
