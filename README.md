@@ -22,6 +22,21 @@ Safari won't allow a website:
 
 It loads https://vault.choseroxy.workers.dev, so website updates show up in the app straight away; there's nothing to rebuild.
 
+## Do I need to update the app?
+
+**No.** You install it once. The app is a window onto the live [vault] website, so every new feature and fix
+shows up in it automatically the next time you open it, the same moment it reaches the website. You never need to
+download a new `.ipa` to get updates.
+
+The only things you might do now and then:
+
+- **Re-sign every 7 days** (free Apple ID only). That's Sideloadly keeping the app allowed to open, not an update:
+  same app, same version. Turn on Sideloadly's auto-refresh and you won't have to think about it.
+- **Reinstall only if this repo's native code changes** (the haptics, background audio or download handling), which
+  is rare. If that happens it'll be mentioned in the commit history here.
+
+If something new doesn't show up, fully close the app (swipe it away) and open it again.
+
 ## Getting the app
 
 1. Open the **Releases** section of this repo (or the **Actions** tab → latest run → *vault-ipa*) and download `vault.ipa`.
