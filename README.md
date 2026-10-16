@@ -2,6 +2,8 @@
 
 **Live:** https://vault.choseroxy.workers.dev/about
 
+**Support:** [ko-fi.com/choseroxy](https://ko-fi.com/choseroxy) ☕
+
 **Web app (main repo):** [waaqef/vault](https://github.com/waaqef/vault): the app itself, its server and everything you see. This repo is only the iPhone wrapper around it.
 
 A personal app for storing and working on music projects, inspired by [untitled].
