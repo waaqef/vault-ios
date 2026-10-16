@@ -1,6 +1,20 @@
-# [vault] for iPhone
+# [vault]
 
-A small native app that shows the live [vault] web app full-screen, and adds what Safari won't allow a website:
+A personal app for storing and working on music projects, inspired by [untitled].
+
+Beats, demos and ideas live in projects and folders, with no file limit. Upload from your phone or computer,
+play everything back with waveforms, star the keepers and mark the throwaways, and edit the actual audio
+(varispeed, pitch, EQ, compressor, gain, trims and fades) without leaving the app. Projects or single tracks can be
+shared with a link, so people can listen, leave comments at a moment in the track, and you can see who played what.
+BPM and key are detected automatically, played songs are kept on your device so they don't download twice, and it
+all syncs between iPhone and computer.
+
+It's free to run: the app is hosted on Cloudflare, and the music is stored on Backblaze B2.
+
+## [vault] for iPhone
+
+This repo is the iPhone app: a small native shell that shows the live [vault] web app full-screen, and adds what
+Safari won't allow a website:
 
 - **Real haptics** (taps while swiping, dragging dials, starring…)
 - **Background playback** that keeps going with the screen locked or the silent switch on
