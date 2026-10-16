@@ -1,5 +1,9 @@
 # [vault]
 
+**Live:** https://vault.choseroxy.workers.dev/about
+
+**Web app (main repo):** [waaqef/vault](https://github.com/waaqef/vault): the app itself, its server and everything you see. This repo is only the iPhone wrapper around it.
+
 A personal app for storing and working on music projects, inspired by [untitled].
 
 Beats, demos and ideas live in projects and folders, with no file limit. Upload from your phone or computer,
