@@ -4,9 +4,58 @@
 import UIKit
 import WebKit
 import AVFoundation
+import UserNotifications
+import BackgroundTasks
 
 let siteURL = URL(string: "https://vault.choseroxy.workers.dev/")!
 let background = UIColor(red: 25 / 255, green: 25 / 255, blue: 25 / 255, alpha: 1)
+let inboxTask = "com.choseroxy.vault.inbox"
+
+// Notifications. iPhone app web views can't get web push, and real push needs a paid Apple developer account, so the
+// app looks at the [vault] inbox itself (signed in with the web view's own cookie) and shows anything new:
+// every minute while it's open or playing music, and now and then in the background, whenever iOS allows.
+enum Inbox {
+    static var lastId: Int {
+        get { UserDefaults.standard.integer(forKey: "lastInboxId") }
+        set { UserDefaults.standard.set(newValue, forKey: "lastInboxId") }
+    }
+    static func check(done: @escaping () -> Void = {}) {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized else { return done() }
+            DispatchQueue.main.async {
+                WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+                    var req = URLRequest(url: siteURL.appendingPathComponent("api/inbox"))
+                    req.allHTTPHeaderFields = HTTPCookie.requestHeaderFields(with: cookies.filter { siteURL.host!.hasSuffix($0.domain.trimmingCharacters(in: ["."])) })
+                    URLSession.shared.dataTask(with: req) { data, response, _ in
+                        defer { done() }
+                        guard (response as? HTTPURLResponse)?.statusCode == 200, let data,
+                              let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
+                        let newest = rows.compactMap { $0["id"] as? Int }.max() ?? 0
+                        let unread = rows.filter { ($0["read"] as? Int) == 0 }
+                        DispatchQueue.main.async { UIApplication.shared.applicationIconBadgeNumber = unread.count }
+                        defer { lastId = max(lastId, newest) }
+                        if lastId == 0 { return } // the first look: don't replay everything from before
+                        for row in unread.prefix(5) {
+                            guard let id = row["id"] as? Int, id > lastId, let title = row["title"] as? String else { continue }
+                            let content = UNMutableNotificationContent()
+                            content.title = title
+                            content.body = row["body"] as? String ?? ""
+                            content.sound = .default
+                            content.userInfo = ["url": row["url"] as? String ?? "/"]
+                            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "inbox-\(id)", content: content, trigger: nil))
+                        }
+                    }.resume()
+                }
+            }
+        }
+    }
+    // Ask iOS to wake the app for another look in about 15 minutes (iOS decides when; often less often).
+    static func scheduleBackground() {
+        let req = BGAppRefreshTaskRequest(identifier: inboxTask)
+        req.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        try? BGTaskScheduler.shared.submit(req)
+    }
+}
 
 final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate {
     private var web: WKWebView!
@@ -22,6 +71,8 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         config.applicationNameForUserAgent = "VaultApp/1 Mobile/15E148 Safari/604.1" // lets the site know it's in the app
         // The page calls window.webkit.messageHandlers.haptic.postMessage('light' | 'medium' | 'tick')
         config.userContentController.add(WeakHandler(self), name: "haptic")
+        // window.webkit.messageHandlers.notify.postMessage({ action: 'status' | 'request' | 'settings' })
+        config.userContentController.add(WeakHandler(self), name: "notify")
 
         web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self
@@ -40,12 +91,44 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         super.viewDidLoad()
         light.prepare(); tick.prepare()
         web.load(URLRequest(url: siteURL))
+        // while the app is running (on screen, or playing in the background): look at the inbox every minute
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in Inbox.check() }
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in Inbox.check() }
+    }
+
+    // A notification was tapped: open what it's about.
+    func open(path: String) {
+        if let url = URL(string: path, relativeTo: siteURL) { web.load(URLRequest(url: url)) }
+    }
+
+    // MARK: notifications from the page
+    private func notify(_ body: Any) {
+        let action = (body as? [String: Any])?["action"] as? String
+        switch action {
+        case "request":
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in
+                self.reportNotify()
+                Inbox.check()
+            }
+        case "settings":
+            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+        default:
+            reportNotify()
+        }
+    }
+    private func reportNotify() {
+        UNUserNotificationCenter.current().getNotificationSettings { s in
+            let state = s.authorizationStatus == .authorized || s.authorizationStatus == .provisional ? "granted"
+                : s.authorizationStatus == .denied ? "denied" : "default"
+            DispatchQueue.main.async { self.web.evaluateJavaScript("window.vaultNotify && window.vaultNotify('\(state)')") }
+        }
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
 
     // MARK: haptics from the page
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "notify" { return notify(message.body) }
         switch message.body as? String {
         case "medium": medium.impactOccurred()
         case "tick": tick.selectionChanged()
@@ -133,9 +216,15 @@ final class WeakHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
-final class AppDelegate: UIResponder, UIApplicationDelegate {
+final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     var window: UIWindow?
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: inboxTask, using: nil) { task in
+            Inbox.scheduleBackground() // and the next one
+            task.expirationHandler = { task.setTaskCompleted(success: false) }
+            Inbox.check { task.setTaskCompleted(success: true) }
+        }
         // "playback" = keeps playing with the screen locked or the silent switch on (with UIBackgroundModes: audio)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
         window = UIWindow(frame: UIScreen.main.bounds)
@@ -143,6 +232,15 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         window?.rootViewController = ViewController()
         window?.makeKeyAndVisible()
         return true
+    }
+    func applicationDidEnterBackground(_ application: UIApplication) { Inbox.scheduleBackground() }
+    // show notifications even while the app is open
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
+        done([.banner, .sound, .list])
+    }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler done: @escaping () -> Void) {
+        if let path = response.notification.request.content.userInfo["url"] as? String { (window?.rootViewController as? ViewController)?.open(path: path) }
+        done()
     }
 }
 
